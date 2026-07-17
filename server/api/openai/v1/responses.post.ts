@@ -1,6 +1,7 @@
 import { getSettings } from '../../../utils/settingsManager'
 import { addRequest, removeRequest } from '../../../utils/requestManager'
 import { estimateTokens, extractContextText } from '../../../utils/tokenUtils'
+import { splitGraphemes } from '../../../utils/textUtils'
 
 export type OpenAIResponsesResponse = {
   id: string
@@ -123,12 +124,12 @@ export default defineEventHandler(async (event) => {
               delta: content
             })
           } else {
-            for (let i = 0; i < content.length; i++) {
+            for (const piece of splitGraphemes(content)) {
               emit('response.output_text.delta', {
                 item_id: itemId,
                 output_index: outputIndex,
                 content_index: 0,
-                delta: content[i]
+                delta: piece
               })
               await new Promise(r => setTimeout(r, speed))
             }

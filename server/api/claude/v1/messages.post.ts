@@ -1,6 +1,7 @@
 import { getSettings } from '../../../utils/settingsManager'
 import { addRequest, removeRequest } from '../../../utils/requestManager'
 import { estimateTokens, extractContextText } from '../../../utils/tokenUtils'
+import { splitGraphemes } from '../../../utils/textUtils'
 
 export type ClaudeMessagesResponse = {
   id: string
@@ -105,11 +106,11 @@ export default defineEventHandler(async (event) => {
               delta: { type: 'text_delta', text: content }
             })
           } else {
-            for (let i = 0; i < content.length; i++) {
+            for (const piece of splitGraphemes(content)) {
               sendSSE('content_block_delta', {
                 type: 'content_block_delta',
                 index: contentBlockIndex,
-                delta: { type: 'text_delta', text: content[i] }
+                delta: { type: 'text_delta', text: piece }
               })
               await new Promise(r => setTimeout(r, speed))
             }

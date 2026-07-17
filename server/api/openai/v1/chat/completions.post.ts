@@ -1,6 +1,7 @@
 import { getSettings } from '../../../../utils/settingsManager'
 import { addRequest, removeRequest, type ToolCall } from '../../../../utils/requestManager'
 import { estimateTokens, extractContextText } from '../../../../utils/tokenUtils'
+import { splitGraphemes } from '../../../../utils/textUtils'
 
 export type OpenAICompletionResponse = {
   id: string
@@ -104,13 +105,13 @@ export default defineEventHandler(async (event) => {
               choices: [{ index: 0, delta: { content }, finish_reason: null }]
             })
           } else {
-            for (let i = 0; i < content.length; i++) {
+            for (const piece of splitGraphemes(content)) {
               sendChunk({
                 id: `chatcmpl-${requestId}`,
                 object: 'chat.completion.chunk',
                 created: now,
                 model: body.model || 'gpt-4o',
-                choices: [{ index: 0, delta: { content: content[i] }, finish_reason: null }]
+                choices: [{ index: 0, delta: { content: piece }, finish_reason: null }]
               })
               await new Promise(r => setTimeout(r, speed))
             }
