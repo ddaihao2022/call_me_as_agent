@@ -200,7 +200,10 @@ const ensureConnection = async (): Promise<boolean> => {
     secure: s.imapSecure,
     auth: { user: s.imapUser, pass: s.imapPass },
     logger: false,
-    emitLogs: false
+    emitLogs: false,
+    // On servers without IDLE support this caps the internal poll interval,
+    // so 'exists' notifications still fire within ~20s
+    maxIdleTime: 20000
   })
   client.on('exists', () => {
     void triggerProcess('exists')
