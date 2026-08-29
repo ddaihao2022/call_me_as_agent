@@ -1,3 +1,4 @@
+import type { ImapFlow } from 'imapflow'
 import { getSettings } from './settingsManager'
 import { finishRequest } from './requestManager'
 import { buildMessageId, extractRequestIdFromReferences } from './emailManager'
@@ -84,12 +85,116 @@ const parseReplyFromSource = async (source: Buffer, subject: string | undefined,
   }
 }
 
-const pollOnce = async (): Promise<void> => {
-  const s = getSettings()
-  if (!s.enableEmailReply || !s.imapHost || !s.imapUser || !s.imapPass) return
+// --- Persistent connection with IDLE push notifications ---
 
-  const { ImapFlow } = await import('imapflow')
-  const client = new ImapFlow({
+let conn: { client: ImapFlow, hash: string } | null = null
+let processing = false
+let processingQueued = false
+let lastSweep = 0
+
+const closeConnection = async (): Promise<void> => {
+  const c = conn
+  conn = null
+  if (!c) return
+  try {
+    c.client.removeAllListeners('exists')
+    c.client.removeAllListeners('error')
+  } catch { /* ignore */ }
+  try {
+    await c.client.logout()
+  } catch {
+    try {
+      c.client.close()
+    } catch { /* ignore */ }
+  }
+}
+
+const processUnseen = async (client: ImapFlow): Promise<number> => {
+  const s = getSettings()
+  if (!s.enableEmailReply) return 0
+
+  const candidates: { uid: number, subject?: string, inReplyTo?: string | string[] }[] = []
+  for await (const msg of client.fetch({ seen: false }, { uid: true, envelope: true })) {
+    candidates.push({
+      uid: msg.uid,
+      subject: msg.envelope?.subject,
+      inReplyTo: (msg.envelope as unknown as { inReplyTo?: string })?.inReplyTo
+    })
+  }
+
+  for (const candidate of candidates) {
+    const requestId = matchRequestId(candidate.subject, candidate.inReplyTo)
+    if (!requestId) continue
+
+    // Fetch the full source only for messages that look like replies to our notifications
+    const fetched = await client.fetchOne(candidate.uid, { source: true }, { uid: true })
+    if (!fetched || !fetched.source) continue
+    const reply = await parseReplyFromSource(fetched.source, candidate.subject, candidate.inReplyTo)
+    if (!reply) continue
+
+    if (reply.fromAddress && !isSenderAllowed(reply.fromAddress)) {
+      console.log(`[EmailReply] Rejected reply from ${reply.fromAddress} (not in allowlist) for request ${requestId}`)
+    } else {
+      try {
+        await finishRequest(requestId, { content: reply.text, simulateStream: true })
+        console.log(`[EmailReply] Delivered email reply to request ${requestId}`)
+        if (reply.fromAddress && reply.text) {
+          import('./emailManager').then(({ sendMail }) => sendMail({
+            to: reply.fromAddress,
+            subject: `[call-me-as-agent #${requestId}] Reply delivered`,
+            inReplyTo: buildMessageId(requestId),
+            text: `Your reply to request #${requestId} has been delivered to the client.\n\n你对请求 #${requestId} 的回复已成功发送给客户端。`
+          })).catch(() => {})
+        }
+      } catch {
+        console.log(`[EmailReply] Request ${requestId} no longer exists, skipping email reply`)
+      }
+    }
+
+    // Mark processed so it is not picked up again
+    try {
+      await client.messageFlagsAdd(String(candidate.uid), ['\\Seen'], { uid: true })
+    } catch {
+      // best effort
+    }
+  }
+  return candidates.length
+}
+
+const triggerProcess = async (reason: string): Promise<void> => {
+  if (!conn) return
+  if (processing) {
+    processingQueued = true
+    return
+  }
+  processing = true
+  try {
+    do {
+      processingQueued = false
+      const count = await processUnseen(conn.client)
+      lastSweep = Date.now()
+      if (count > 0) console.log(`[EmailReply] ${reason}: scanned ${count} unseen message(s)`)
+    } while (processingQueued && conn)
+  } catch (e) {
+    console.error('[EmailReply] Processing failed:', e instanceof Error ? e.message : e)
+    await closeConnection()
+  } finally {
+    processing = false
+  }
+}
+
+const ensureConnection = async (): Promise<boolean> => {
+  const s = getSettings()
+  if (!s.enableEmailReply || !s.imapHost || !s.imapUser || !s.imapPass) {
+    await closeConnection()
+    return false
+  }
+  const hash = [s.imapHost, s.imapPort, s.imapSecure, s.imapUser, s.imapPass, s.imapMailbox].join('|')
+  if (conn && conn.hash === hash && conn.client.usable) return true
+  await closeConnection()
+
+  const { ImapFlow: Client } = await import('imapflow')
+  const client = new Client({
     host: s.imapHost,
     port: s.imapPort,
     secure: s.imapSecure,
@@ -97,85 +202,37 @@ const pollOnce = async (): Promise<void> => {
     logger: false,
     emitLogs: false
   })
+  client.on('exists', () => {
+    void triggerProcess('exists')
+  })
+  client.on('error', (e) => {
+    console.error('[EmailReply] Connection error:', e instanceof Error ? e.message : e)
+    void closeConnection()
+  })
+  await client.connect()
+  await client.mailboxOpen(s.imapMailbox || 'INBOX')
+  conn = { client, hash }
+  console.log(`[EmailReply] Connected to ${s.imapHost} (IDLE ${client.capabilities?.has('IDLE') ? 'supported' : 'not supported, relying on sweeps'})`)
+  return true
+}
 
+const tick = async (): Promise<void> => {
   try {
-    await client.connect()
-    const lock = await client.getMailboxLock(s.imapMailbox || 'INBOX')
-    try {
-      const candidates: { uid: number, subject?: string, inReplyTo?: string | string[] }[] = []
-      for await (const msg of client.fetch({ seen: false }, { uid: true, envelope: true })) {
-        candidates.push({
-          uid: msg.uid,
-          subject: msg.envelope?.subject,
-          inReplyTo: (msg.envelope as unknown as { inReplyTo?: string })?.inReplyTo
-        })
-      }
-
-      for (const candidate of candidates) {
-        const requestId = matchRequestId(candidate.subject, candidate.inReplyTo)
-        if (!requestId) continue
-
-        // Fetch the full source only for messages that look like replies to our notifications
-        const fetched = await client.fetchOne(candidate.uid, { source: true }, { uid: true })
-        if (!fetched || !fetched.source) continue
-        const reply = await parseReplyFromSource(fetched.source, candidate.subject, candidate.inReplyTo)
-        if (!reply) continue
-
-        if (reply.fromAddress && !isSenderAllowed(reply.fromAddress)) {
-          console.log(`[EmailReply] Rejected reply from ${reply.fromAddress} (not in allowlist) for request ${requestId}`)
-        } else {
-          try {
-            await finishRequest(requestId, { content: reply.text, simulateStream: true })
-            console.log(`[EmailReply] Delivered email reply to request ${requestId}`)
-            if (reply.fromAddress && reply.text) {
-              import('./emailManager').then(({ sendMail }) => sendMail({
-                to: reply.fromAddress,
-                subject: `[call-me-as-agent #${requestId}] Reply delivered`,
-                inReplyTo: buildMessageId(requestId),
-                text: `Your reply to request #${requestId} has been delivered to the client.\n\n你对请求 #${requestId} 的回复已成功发送给客户端。`
-              })).catch(() => {})
-            }
-          } catch {
-            console.log(`[EmailReply] Request ${requestId} no longer exists, skipping email reply`)
-          }
-        }
-
-        // Mark processed so it is not picked up again
-        try {
-          await client.messageFlagsAdd(String(candidate.uid), ['\\Seen'], { uid: true })
-        } catch {
-          // best effort
-        }
-      }
-    } finally {
-      lock.release()
+    const ok = await ensureConnection()
+    if (!ok || !conn) return
+    // Safety-net sweep in case IDLE notifications are missed on flaky servers
+    const s = getSettings()
+    const sweepInterval = Math.max(30, s.emailPollInterval || 60) * 1000
+    if (Date.now() - lastSweep >= sweepInterval) {
+      await triggerProcess('sweep')
     }
-  } finally {
-    try {
-      await client.logout()
-    } catch { /* ignore */ }
+  } catch (e) {
+    console.error('[EmailReply] Tick failed:', e instanceof Error ? e.message : e)
+    await closeConnection()
   }
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let polling = false
-let lastRun = 0
-
-const tick = async () => {
-  const s = getSettings()
-  if (!s.enableEmailReply || polling) return
-  const interval = Math.max(10, s.emailPollInterval || 60) * 1000
-  if (Date.now() - lastRun < interval) return
-  polling = true
-  lastRun = Date.now()
-  try {
-    await pollOnce()
-  } catch (e) {
-    console.error('[EmailReply] Poll failed:', e instanceof Error ? e.message : e)
-  } finally {
-    polling = false
-  }
-}
 
 export const startEmailReplyPolling = () => {
   if (pollTimer) return
