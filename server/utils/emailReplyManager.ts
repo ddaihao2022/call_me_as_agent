@@ -147,7 +147,16 @@ const processUnseen = async (client: ImapFlow): Promise<number> => {
           })).catch(() => {})
         }
       } catch {
-        console.log(`[EmailReply] Request ${requestId} no longer exists, skipping email reply`)
+        console.log(`[EmailReply] Request ${requestId} no longer exists, notifying sender`)
+        // Tell the sender why nothing happened, so stale replies are not silently swallowed
+        if (reply.fromAddress && reply.text) {
+          import('./emailManager').then(({ sendMail }) => sendMail({
+            to: reply.fromAddress,
+            subject: `[call-me-as-agent #${requestId}] Request no longer active`,
+            inReplyTo: buildMessageId(requestId),
+            text: `Your reply was received, but request #${requestId} is no longer pending (it may have been answered already, or the client disconnected).\n\n你的回复已收到，但请求 #${requestId} 已不在等待列表中（可能已被处理，或客户端已断开连接/超时）。请让客户端重新发起请求，然后回复最新的那封通知邮件。`
+          })).catch(() => {})
+        }
       }
     }
 
