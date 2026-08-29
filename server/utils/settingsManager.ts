@@ -4,7 +4,7 @@ import path from 'node:path'
 export interface AppSettings {
   // Auth
   enableApiKeyAuth: boolean
-  apiKey: string
+  apiKeyValue: string
   enablePasswordAuth: boolean
   enableOtpAuth: boolean
   otpSecret: string
@@ -27,11 +27,28 @@ export interface AppSettings {
   useHeaderForIp: boolean
   ipHeaderName: string
   shutdownMessage: string
+  // Email notification & reply
+  enableEmailNotify: boolean
+  notifyEmailTo: string
+  smtpHost: string
+  smtpPort: number
+  smtpSecure: boolean
+  smtpUser: string
+  smtpPass: string
+  enableEmailReply: boolean
+  imapHost: string
+  imapPort: number
+  imapSecure: boolean
+  imapUser: string
+  imapPass: string
+  imapMailbox: string
+  emailPollInterval: number // seconds between IMAP polls
+  emailReplyAllowFrom: string // comma-separated allowlist, empty = accept any sender
 }
 
 const defaultSettings: AppSettings = {
   enableApiKeyAuth: false,
-  apiKey: 'sk-human-agent',
+  apiKeyValue: 'sk-human-agent',
   enablePasswordAuth: true,
   enableOtpAuth: false,
   otpSecret: '',
@@ -51,7 +68,23 @@ const defaultSettings: AppSettings = {
   toastTimeout: 3000,
   useHeaderForIp: true,
   ipHeaderName: 'x-forwarded-for',
-  shutdownMessage: '\n\n[Server Shutdown] The proxy server is closing. Please retry your request if needed.'
+  shutdownMessage: '\n\n[Server Shutdown] The proxy server is closing. Please retry your request if needed.',
+  enableEmailNotify: false,
+  notifyEmailTo: '',
+  smtpHost: '',
+  smtpPort: 465,
+  smtpSecure: true,
+  smtpUser: '',
+  smtpPass: '',
+  enableEmailReply: false,
+  imapHost: '',
+  imapPort: 993,
+  imapSecure: true,
+  imapUser: '',
+  imapPass: '',
+  imapMailbox: 'INBOX',
+  emailPollInterval: 60,
+  emailReplyAllowFrom: ''
 }
 
 const settingsPath = path.resolve(process.cwd(), '.data', 'settings.json')
@@ -59,8 +92,13 @@ const settingsPath = path.resolve(process.cwd(), '.data', 'settings.json')
 export const getSettings = (): AppSettings => {
   try {
     if (fs.existsSync(settingsPath)) {
-      const data = fs.readFileSync(settingsPath, 'utf-8')
-      return { ...defaultSettings, ...JSON.parse(data) }
+      const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+      // Migrate the pre-rename apiKey field
+      if (data.apiKey !== undefined && data.apiKeyValue === undefined) {
+        data.apiKeyValue = data.apiKey
+      }
+      delete data.apiKey
+      return { ...defaultSettings, ...data }
     }
   } catch (e) {
     console.error('[SettingsManager] Failed to read settings', e)

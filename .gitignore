@@ -28,3 +28,6 @@ opencode.json
 
 # Codex
 .codex
+
+# Mimosa security plugin local state
+.mimosa/

@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   const settings = getSettings()
   if (settings.enableApiKeyAuth) {
     const apiKey = getHeader(event, 'x-api-key') || ''
-    if (apiKey !== settings.apiKey) {
+    if (apiKey !== settings.apiKeyValue) {
       throw createError({
         statusCode: 401,
         statusMessage: 'Unauthorized: Invalid API Key'
@@ -177,6 +177,9 @@ export default defineEventHandler(async (event) => {
     })
   } else {
     // Non-streaming: Wait for final with heartbeat
+    // Declare the JSON content type up-front: keep-alive writes below will flush the headers,
+    // and setting headers after that would throw
+    event.node.res.setHeader('Content-Type', 'application/json')
     return new Promise((resolve) => {
       // Setup keep-alive for non-streaming: send whitespace to keep connection alive
       const keepAliveTimer = setInterval(() => {
@@ -228,7 +231,6 @@ export default defineEventHandler(async (event) => {
           } as ClaudeMessagesResponse
 
           if (!event.node.res.writableEnded) {
-            event.node.res.setHeader('Content-Type', 'application/json')
             event.node.res.end(JSON.stringify(result))
           }
           resolve(undefined)
