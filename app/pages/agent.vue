@@ -105,7 +105,7 @@ const login = async () => {
     await refresh()
   } catch (e: unknown) {
     const errorData = (e as { data?: { statusMessage?: string } })?.data
-    toast.add({ title: errorData?.statusMessage || t('password_invalid'), color: 'error' })
+    toast.add({ title: errorData?.statusMessage || t('invalid_password'), color: 'error' })
   } finally {
     isLoggingIn.value = false
   }

@@ -13,7 +13,7 @@ const checkAuth = async () => {
 
 const settingsForm = ref({
   enableApiKeyAuth: false,
-  apiKeyValue: '',
+  apiKey: '',
   enablePasswordAuth: true,
   enableOtpAuth: false,
   otpSecret: '',
@@ -519,11 +519,11 @@ const saveSettings = async () => {
               </UFormField>
               <UFormField
                 v-if="settingsForm.enableApiKeyAuth"
-                :label="t('api_key_expected')"
-                :description="t('api_key_expected_desc')"
+                :label="t('expected_api_key')"
+                :description="t('expected_api_key_desc')"
               >
                 <UInput
-                  v-model="settingsForm.apiKeyValue"
+                  v-model="settingsForm.apiKey"
                   type="password"
                   icon="i-lucide-key"
                   placeholder="sk-human-agent"

@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   const settings = getSettings()
   if (settings.enableApiKeyAuth) {
     const apiKey = getHeader(event, 'x-api-key') || ''
-    if (apiKey !== settings.apiKeyValue) {
+    if (apiKey !== settings.apiKey) {
       throw createError({
         statusCode: 401,
         statusMessage: 'Unauthorized: Invalid API Key'

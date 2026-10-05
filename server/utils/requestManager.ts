@@ -71,7 +71,7 @@ export const addRequest = (type: 'openai' | 'claude' | 'openai-responses', paylo
       instructions: payload.instructions,
       model: payload.model
     })
-    const id = crypto.createHash('sha256').update(hashContent).digest('hex').substring(0, 15)
+    const id = crypto.createHash('md5').update(hashContent).digest('hex').substring(0, 15)
 
     const existing = pendingRequests.get(id)
     if (existing) {

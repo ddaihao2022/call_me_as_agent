@@ -4,7 +4,7 @@ import path from 'node:path'
 export interface AppSettings {
   // Auth
   enableApiKeyAuth: boolean
-  apiKeyValue: string
+  apiKey: string
   enablePasswordAuth: boolean
   enableOtpAuth: boolean
   otpSecret: string
@@ -48,7 +48,7 @@ export interface AppSettings {
 
 const defaultSettings: AppSettings = {
   enableApiKeyAuth: false,
-  apiKeyValue: 'sk-human-agent',
+  apiKey: 'sk-human-agent',
   enablePasswordAuth: true,
   enableOtpAuth: false,
   otpSecret: '',
@@ -92,13 +92,8 @@ const settingsPath = path.resolve(process.cwd(), '.data', 'settings.json')
 export const getSettings = (): AppSettings => {
   try {
     if (fs.existsSync(settingsPath)) {
-      const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-      // Migrate the pre-rename apiKey field
-      if (data.apiKey !== undefined && data.apiKeyValue === undefined) {
-        data.apiKeyValue = data.apiKey
-      }
-      delete data.apiKey
-      return { ...defaultSettings, ...data }
+      const data = fs.readFileSync(settingsPath, 'utf-8')
+      return { ...defaultSettings, ...JSON.parse(data) }
     }
   } catch (e) {
     console.error('[SettingsManager] Failed to read settings', e)
